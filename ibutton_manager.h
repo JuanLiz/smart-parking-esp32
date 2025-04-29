@@ -5,72 +5,103 @@
 #include <OneWire.h>
 #include <EEPROM.h>
 
-// --- Constantes ---
-#define MAX_IBUTTONS 20        // Máximo número de iButtons a almacenar
-#define IBUTTON_ID_LEN 8       // Longitud del ID del iButton (bytes)
-#define IBUTTON_PIN 33         // Pin donde está conectado el lector OneWire
-#define INVALID_ASSOCIATED_ID 0 // Un valor para indicar ID asociado no encontrado o inválido
+// --- Constants ---
+#define IBUTTON_ID_LEN 8       // Length of the iButton ID in bytes
+#define INVALID_ASSOCIATED_ID 0 // Value indicating an invalid or not-found associated ID
+const int EEPROM_CONFIG_OFFSET = 16; // Bytes reserved at the beginning of EEPROM for configuration
+const uint32_t EEPROM_INIT_SIGNATURE = 0xCAFEFE0D; // 
+const int EEPROM_SIGNATURE_ADDR = 0;             // Store signature at address 0
+const int EEPROM_OCCUPANCY_COUNT_ADDR = 4;  // Use next 4 bytes after signature for the counter
 
-// --- Estructura de Datos ---
+
+// --- Data Structure ---
+// Structure to store one record in EEPROM
 struct IButtonRecord {
   bool is_valid;
   uint32_t associated_id;
-  byte ibutton_id[IBUTTON_ID_LEN];
+  byte ibutton_id[IBUTTON_ID_LEN]; // The physical ID of the iButton
+  bool is_inside; // Flag to track if the iButton holder is inside
 };
 
-// Tamaño total necesario en EEPROM
-const int EEPROM_SIZE = sizeof(IButtonRecord) * MAX_IBUTTONS;
 
-// --- Declaraciones de Funciones Públicas ---
+// --- Public Function Declarations ---
 
 /**
- * @brief Inicializa el gestor de iButtons (EEPROM y OneWire).
- * Debe llamarse en el setup() principal.
+ * @brief Initializes the iButton manager.
+ * Configures OneWire, initializes EEPROM with offset, and stores parameters.
+ * Must be called in the main setup().
+ * @param pin The GPIO pin connected to the OneWire data line.
+ * @param max_records The maximum number of iButton records to manage.
  */
-void setupIButtonManager();
+void setupIButtonManager(uint8_t pin, int max_records);
 
 /**
- * @brief Lee un iButton presente en el lector.
- * @param id_buffer Buffer donde se almacenará el ID leído (debe tener tamaño IBUTTON_ID_LEN).
- * @return true si se leyó un iButton DS1990A válido, false en caso contrario.
+ * @brief Reads an iButton present on the reader.
+ * @param id_buffer Buffer where the read ID will be stored (must be IBUTTON_ID_LEN bytes).
+ * @return true if a valid DS1990A iButton was read successfully, false otherwise.
  */
 bool readIButton(byte* id_buffer);
 
 /**
- * @brief Registra un nuevo iButton en la EEPROM.
- * Busca un slot libre y guarda la información. No permite registrar duplicados.
- * @param associated_id El ID personalizado a asociar con este iButton.
- * @param ibutton_id El ID físico del iButton a registrar (8 bytes).
- * @return true si el registro fue exitoso, false si no hay espacio o el iButton ya existe.
+ * @brief Gets the full record for a given iButton ID.
+ * Searches EEPROM after the offset.
+ * @param ibutton_id The physical ID of the iButton to search for (IBUTTON_ID_LEN bytes).
+ * @param[out] record_out Reference to an IButtonRecord struct where the found record will be copied.
+ * @param[out] record_index Optional pointer to store the index (slot) where the record was found. Can be nullptr.
+ * @return true if the iButton is registered and found, false otherwise.
  */
-bool registerIButton(uint32_t associated_id, const byte* ibutton_id);
+bool getIButtonRecord(const byte* ibutton_id, IButtonRecord &record_out, int* record_index = nullptr);
 
 /**
- * @brief Verifica si un iButton está registrado y recupera su ID asociado.
- * @param ibutton_id El ID físico del iButton a verificar (8 bytes).
- * @param[out] associated_id_out Referencia donde se guardará el ID asociado si se encuentra.
- * @return true si el iButton está registrado, false en caso contrario.
+ * @brief Registers a new iButton in EEPROM after the offset.
+ * Searches for a free slot, automatically generates the next available associated ID,
+ * and stores the information. Prevents duplicate registrations.
+ * @param ibutton_id The physical ID of the iButton to register (IBUTTON_ID_LEN bytes).
+ * @return true if registration was successful, false if no space is available, the iButton already exists, or an ID could not be generated.
  */
-bool isIButtonRegistered(const byte* ibutton_id, uint32_t &associated_id_out);
+bool registerIButton(const byte* ibutton_id);
 
 /**
- * @brief Elimina el registro de un iButton de la EEPROM.
- * Busca el iButton por su ID físico y marca su slot como inválido.
- * @param ibutton_id El ID físico del iButton a eliminar (8 bytes).
- * @return true si la eliminación fue exitosa, false si el iButton no se encontró.
+ * @brief Updates an existing iButton record in EEPROM.
+ * Used internally to update the is_inside flag.
+ * @param index The index (slot) of the record to update.
+ * @param record The IButtonRecord data to write.
+ * @return true if the update and commit were successful, false otherwise.
+ */
+bool updateIButtonRecord(int index, const IButtonRecord& record);
+
+/**
+ * @brief Deletes the registration of an iButton from EEPROM.
+ * Searches for the iButton by its physical ID (after the offset) and marks its slot as invalid.
+ * @param ibutton_id The physical ID of the iButton to delete (IBUTTON_ID_LEN bytes).
+ * @return true if deletion was successful, false if the iButton was not found.
  */
 bool deleteIButton(const byte* ibutton_id);
 
 /**
- * @brief Imprime un ID de iButton en formato hexadecimal al Serial.
- * @param id El buffer con el ID del iButton (8 bytes).
+ * @brief Prints an iButton ID in hexadecimal format to the Serial monitor.
+ * @param id The buffer containing the iButton ID (IBUTTON_ID_LEN bytes).
  */
 void printIButtonID(const byte* id);
 
 /**
- * @brief Imprime todos los iButtons registrados actualmente en la EEPROM al Serial.
- * Útil para depuración.
+ * @brief Prints all currently registered iButtons stored in EEPROM (after the offset) to the Serial monitor.
+ * Useful for debugging.
  */
 void printAllRegisteredIButtons();
+
+/**
+ * @brief Reads the current occupancy count from EEPROM.
+ * @return The stored occupancy count, or 0 if read fails or looks invalid (e.g., negative interpreted value).
+ */
+uint32_t readOccupancyCount();
+
+/**
+ * @brief Writes the current occupancy count to EEPROM.
+ * @param count The occupancy count to write.
+ * @return true if write and commit were successful, false otherwise.
+ */
+bool writeOccupancyCount(uint32_t count);
+
 
 #endif // IBUTTON_MANAGER_H
