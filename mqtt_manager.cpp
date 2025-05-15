@@ -337,10 +337,9 @@ void mqttCallback(char* topic, byte* payload_bytes, unsigned int length) {
 
 // --- Specific Publishing Functions ---
 void publishStatus(bool online, uint32_t occupancy, uint32_t total_spaces) {
-  // LWT handles offline. This is for explicit online + data.
-  snprintf(char_buffer, sizeof(char_buffer), "{\"online\":%s, \"occupancy\":%u, \"total_spaces\":%u, \"ip\":\"%s\"}",
-           online ? "true" : "false", occupancy, total_spaces, WiFi.localIP().toString().c_str());
-  publishMQTTMessage("status", char_buffer, true);  // Retain status
+    snprintf(char_buffer, sizeof(char_buffer), "{\"online\":%s, \"occupancy\":%u, \"total_spaces\":%u, \"ip\":\"%s\"}",
+             online ? "true" : "false", occupancy, total_spaces, WiFi.localIP().toString().c_str());
+    publishMQTTMessage("status", char_buffer, true);
 }
 
 void publishIButtonScanned(const byte* ibutton_id, bool is_registered, uint32_t associated_id) {

@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include <ESP32Servo.h>
 #include "ibutton_manager.h"
-#include "mqtt_manager.h" 
+#include "mqtt_manager.h"
 
 // --- User Configuration ---
 // iButton
@@ -24,12 +24,12 @@
 #define REJECT_BEEP_COUNT 3          // Number of rejection beeps
 
 // --- WiFi Configuration ---
-const char *WIFI_SSID = "LIZARAZO_PAEZ";
-const char *WIFI_PASSWORD = "1076240426AG.";
+const char *WIFI_SSID = "jalarras";
+const char *WIFI_PASSWORD = "saposapo777";
 
 // --- MQTT Configuration ---
 MQTTConfig mqtt_settings = {
-  "broker.hivemq.com",       // Broker host
+  "broker.emqx.io",          // Broker host
   1883,                      // Broker port
   "juanliz-sparking-",       // Client ID prefix (ESP MAC part will be added)
   "juanliz-sparking-esp32/"  // Base topic prefix
@@ -84,60 +84,66 @@ void intermitentBeep() {
 }
 
 
-void processEntry(IButtonRecord& record, int record_idx) {
-    unsigned long entry_time = millis(); // For cooldown
-    if (current_occupancy < TOTAL_PARKING_SPACES) {
-        Serial.println("Space available. Opening gate for entry.");
-        openGate();
-        current_occupancy++;
-        record.is_inside = true;
-        if (updateIButtonRecord(record_idx, record) && writeOccupancyCount(current_occupancy)) {
-            Serial.println("Entry successful. Record and count updated.");
-        } else {
-            Serial.println("Error: Failed to update record/occupancy for entry. Reverting RAM.");
-            current_occupancy--; // Revert RAM
-            record.is_inside = false; // Revert RAM
-            // Note: EEPROM might be inconsistent if one write failed.
-        }
-        delay(GATE_OPEN_DELAY_MS);
-        closeGate();
-        memcpy(last_scanned_id, record.ibutton_id, IBUTTON_ID_LEN); // Use record's ID
-        last_scan_timestamp = entry_time; // Use the time of entry attempt
-    } else {
-        Serial.println("Parking FULL. Entry denied.");
-        intermitentBeep();
-    }
-}
-
-
-void processExit(IButtonRecord& record, int record_idx) {
-    unsigned long exit_time = millis(); // For cooldown
-    Serial.println("Attempting EXIT. Opening gate.");
+void processEntry(IButtonRecord &record, int record_idx) {
+  unsigned long entry_time = millis();  // For cooldown
+  if (current_occupancy < TOTAL_PARKING_SPACES) {
+    Serial.println("Space available. Opening gate for entry.");
     openGate();
-
-    if (current_occupancy > 0) {
-        current_occupancy--;
+    current_occupancy++;
+    record.is_inside = true;
+    if (updateIButtonRecord(record_idx, record) && writeOccupancyCount(current_occupancy)) {
+      Serial.println("Entry successful. Record and count updated.");
+      if (isMQTTConnected()) {  // NUEVO: Publicar estado actualizado
+        publishStatus(true, current_occupancy, TOTAL_PARKING_SPACES);
+      }
     } else {
-        Serial.println("Warning: Occupancy already 0, cannot decrement further for exit.");
-    }
-    record.is_inside = false;
-
-    if (updateIButtonRecord(record_idx, record)) {
-        if (writeOccupancyCount(current_occupancy)) {
-            Serial.println("Exit successful. Record and count updated.");
-        } else {
-            Serial.println("Error: Failed to update occupancy count after record update for exit. Record updated.");
-            // RAM count was already decremented.
-        }
-    } else {
-        Serial.println("Error: Failed to update iButton record for exit. Reverting RAM occupancy.");
-        if (current_occupancy < TOTAL_PARKING_SPACES) current_occupancy++; // Revert RAM count if possible
-        // record.is_inside remains false in RAM, but EEPROM is not updated.
+      Serial.println("Error: Failed to update record/occupancy for entry. Reverting RAM.");
+      current_occupancy--;       // Revert RAM
+      record.is_inside = false;  // Revert RAM
+                                 // Note: EEPROM might be inconsistent if one write failed.
     }
     delay(GATE_OPEN_DELAY_MS);
     closeGate();
-    memcpy(last_scanned_id, record.ibutton_id, IBUTTON_ID_LEN); // Use record's ID
-    last_scan_timestamp = exit_time; // Use the time of exit attempt
+    memcpy(last_scanned_id, record.ibutton_id, IBUTTON_ID_LEN);  // Use record's ID
+    last_scan_timestamp = entry_time;                            // Use the time of entry attempt
+  } else {
+    Serial.println("Parking FULL. Entry denied.");
+    intermitentBeep();
+  }
+}
+
+
+void processExit(IButtonRecord &record, int record_idx) {
+  unsigned long exit_time = millis();  // For cooldown
+  Serial.println("Attempting EXIT. Opening gate.");
+  openGate();
+
+  if (current_occupancy > 0) {
+    current_occupancy--;
+  } else {
+    Serial.println("Warning: Occupancy already 0, cannot decrement further for exit.");
+  }
+  record.is_inside = false;
+
+  if (updateIButtonRecord(record_idx, record)) {
+    if (writeOccupancyCount(current_occupancy)) {
+      Serial.println("Exit successful. Record and count updated.");
+      if (isMQTTConnected()) {  // NUEVO: Publicar estado actualizado
+        publishStatus(true, current_occupancy, TOTAL_PARKING_SPACES);
+      }
+    } else {
+      Serial.println("Error: Failed to update occupancy count after record update for exit. Record updated.");
+      // RAM count was already decremented.
+    }
+  } else {
+    Serial.println("Error: Failed to update iButton record for exit. Reverting RAM occupancy.");
+    if (current_occupancy < TOTAL_PARKING_SPACES) current_occupancy++;  // Revert RAM count if possible
+                                                                        // record.is_inside remains false in RAM, but EEPROM is not updated.
+  }
+  delay(GATE_OPEN_DELAY_MS);
+  closeGate();
+  memcpy(last_scanned_id, record.ibutton_id, IBUTTON_ID_LEN);  // Use record's ID
+  last_scan_timestamp = exit_time;                             // Use the time of exit attempt
 }
 
 void handleSerialCommands() {
@@ -182,7 +188,13 @@ void handleSerialCommands() {
 
 // --- Setup ---
 void setup() {
+  // NUEVO: Iniciar Serial con timeout
   Serial.begin(115200);
+  unsigned long serial_timeout_start = millis();
+  while (!Serial && (millis() - serial_timeout_start < 2000)) { // Espera hasta 2 segundos
+    // Puedes dejar este bucle vacío o parpadear un LED si tienes uno para indicar espera
+    delay(10);
+  }
   delay(1500);
   Serial.println("\n--- ESP32 Smart Parking System ---");
 
@@ -221,61 +233,82 @@ void loop() {
   // 1. Handle commands from Serial Monitor
   handleSerialCommands();
   // 2. Handle MQTT connection and messages
-  loopMQTTManager(); // Procesa MQTT. Puede:
-                     // - Llamar callback -> setear two_fa_granted (si respuesta llega)
-                     // - Expirar timeout -> setear two_fa_granted=false y clear2FA_WaitingState() (si tiempo pasa)
+  loopMQTTManager();  // Procesa MQTT. Puede:
+                      // - Llamar callback -> setear two_fa_granted (si respuesta llega)
+                      // - Expirar timeout -> setear two_fa_granted=false y clear2FA_WaitingState() (si tiempo pasa)
+
+
+  static bool mqtt_just_connected = false;
+  static bool last_mqtt_connected_state = false;
+
+  if (isMQTTConnected() && !last_mqtt_connected_state) {
+    mqtt_just_connected = true;  // Marcamos que acabamos de conectar
+  }
+  last_mqtt_connected_state = isMQTTConnected();
+
+  if (mqtt_just_connected) {
+    Serial.println("MQTT just connected (or reconnected). Publishing status...");
+    publishStatus(true, current_occupancy, TOTAL_PARKING_SPACES);
+    mqtt_just_connected = false;  // Resetear el flag
+  }
 
   // --- PROACTIVE CHECK for 2FA Result ---
-  static bool was_waiting_before = false; // Static variable to track previous waiting state
+  static bool was_waiting_before = false;  // Static variable to track previous waiting state
 
   if (isWaitingFor2FA()) {
-      // Aún estamos esperando. ¿Llegó una respuesta CONCEDIDA?
-      if (get2FA_GrantStatus()) { // Si get2FA_GrantStatus() es true, el callback la puso así.
-          Serial.println("PROACTIVE CHECK: 2FA Granted via callback. Proceeding with entry.");
-          byte ibutton_id_for_2fa_entry[IBUTTON_ID_LEN];
-          String stored_ib_str = get2FA_iButtonId_Str();
-          bool conversion_ok = false;
+    // Aún estamos esperando. ¿Llegó una respuesta CONCEDIDA?
+    if (get2FA_GrantStatus()) {  // Si get2FA_GrantStatus() es true, el callback la puso así.
+      Serial.println("PROACTIVE CHECK: 2FA Granted via callback. Proceeding with entry.");
+      byte ibutton_id_for_2fa_entry[IBUTTON_ID_LEN];
+      String stored_ib_str = get2FA_iButtonId_Str();
+      bool conversion_ok = false;
 
-           if (stored_ib_str.length() == IBUTTON_ID_LEN * 2) {
-               for (int i = 0; i < IBUTTON_ID_LEN; i++) {
-                   char hex_pair[3] = {stored_ib_str.charAt(i * 2), stored_ib_str.charAt(i * 2 + 1), '\0'};
-                   ibutton_id_for_2fa_entry[i] = strtol(hex_pair, nullptr, 16);
-               }
-               conversion_ok = true;
-           }
-
-           if (conversion_ok) {
-               IButtonRecord record_for_entry;
-               int record_idx_for_entry;
-               if (getIButtonRecord(ibutton_id_for_2fa_entry, record_for_entry, &record_idx_for_entry)) {
-                    if (!record_for_entry.is_inside) {
-                         Serial.println("Proactive 2FA Grant: Executing entry.");
-                         processEntry(record_for_entry, record_idx_for_entry); // Use helper
-                    } else { Serial.println("Proactive 2FA Grant: iButton already inside?"); }
-               } else { Serial.println("Proactive 2FA Grant: Could not find record for granted ID!"); }
-           } else { Serial.println("Proactive 2FA Grant: Error converting stored ID."); }
-
-          clear2FA_WaitingState();
-          reset2FA_GrantStatus();
-          currentState = IDLE;
+      if (stored_ib_str.length() == IBUTTON_ID_LEN * 2) {
+        for (int i = 0; i < IBUTTON_ID_LEN; i++) {
+          char hex_pair[3] = { stored_ib_str.charAt(i * 2), stored_ib_str.charAt(i * 2 + 1), '\0' };
+          ibutton_id_for_2fa_entry[i] = strtol(hex_pair, nullptr, 16);
+        }
+        conversion_ok = true;
       }
-      // If still waiting and not granted, do nothing here, let timeout or next scan handle.
-      was_waiting_before = true; // Update static state: we are currently waiting
-  } else { // Ya NO estamos esperando por 2FA (isWaitingFor2FA() es false).
-           // This could be due to:
-           // 1. Timeout in loopMQTTManager() (set isWaitingFor2FA=false, two_fa_granted=false).
-           // 2. Granted logic above executed (set isWaitingFor2FA=false, two_fa_granted=false).
-           // 3. 2FA was never initiated.
 
-      if (was_waiting_before) { // Transition: Was waiting in a previous iteration, now not.
-                                // And we didn't enter the get2FA_GrantStatus() block above.
-                                // So, this means the 2FA process ended due to DENIAL or TIMEOUT.
-          Serial.println("PROACTIVE CHECK: 2FA process finished (DENIED or TIMEOUT). Entry aborted.");
-          intermitentBeep();
-          reset2FA_GrantStatus(); // Ensure grant flag is false (timeout already does this)
-          currentState = IDLE;
+      if (conversion_ok) {
+        IButtonRecord record_for_entry;
+        int record_idx_for_entry;
+        if (getIButtonRecord(ibutton_id_for_2fa_entry, record_for_entry, &record_idx_for_entry)) {
+          if (!record_for_entry.is_inside) {
+            Serial.println("Proactive 2FA Grant: Executing entry.");
+            processEntry(record_for_entry, record_idx_for_entry);  // Use helper
+          } else {
+            Serial.println("Proactive 2FA Grant: iButton already inside?");
+          }
+        } else {
+          Serial.println("Proactive 2FA Grant: Could not find record for granted ID!");
+        }
+      } else {
+        Serial.println("Proactive 2FA Grant: Error converting stored ID.");
       }
-      was_waiting_before = false; // Update static state: we are not currently waiting
+
+      clear2FA_WaitingState();
+      reset2FA_GrantStatus();
+      currentState = IDLE;
+    }
+    // If still waiting and not granted, do nothing here, let timeout or next scan handle.
+    was_waiting_before = true;  // Update static state: we are currently waiting
+  } else {
+    // This could be due to:
+    // 1. Timeout in loopMQTTManager() (set isWaitingFor2FA=false, two_fa_granted=false).
+    // 2. Granted logic above executed (set isWaitingFor2FA=false, two_fa_granted=false).
+    // 3. 2FA was never initiated.
+
+    if (was_waiting_before) {  // Transition: Was waiting in a previous iteration, now not.
+                               // And we didn't enter the get2FA_GrantStatus() block above.
+                               // So, this means the 2FA process ended due to DENIAL or TIMEOUT.
+      Serial.println("PROACTIVE CHECK: 2FA process finished (DENIED or TIMEOUT). Entry aborted.");
+      // intermitentBeep();
+      reset2FA_GrantStatus();  // Ensure grant flag is false (timeout already does this)
+      currentState = IDLE;
+    }
+    was_waiting_before = false;  // Update static state: we are not currently waiting
   }
   // --- End PROACTIVE CHECK ---
 
@@ -304,13 +337,13 @@ void loop() {
         // registerIButton prints its own errors ("already exists" or "no space")
         // Determine a more specific reason if possible for the MQTT message
         // For now, a generic "registration_failed"
-        publishPairingFailure(getCurrentPairingSessionId(), "registration_failed_local");
+        publishPairingFailure(getCurrentPairingSessionId(), "El botón ya existe");
         Serial.println("Failed to register iButton via MQTT.");
       }
       clearPairingMode();   // Important: clear pairing mode in MQTT manager
       currentState = IDLE;  // Ensure local state machine is also IDLE
 
-      delay(1500); 
+      delay(1500);
     }
     // No iButton yet, or pairing timed out (handled in mqtt_manager.loopMQTTManager)
     delay(50);  // Small delay when in pairing mode waiting for iButton
@@ -387,25 +420,25 @@ void loop() {
 
             bool is_2fa_globally_required = true;  // TODO: Make this configurable
 
-            if (!current_record.is_inside) { // Attempting ENTRY
-                if (is_2fa_globally_required) { // 2FA is required for entry
-                    if (!isWaitingFor2FA()) { // And no 2FA request is pending for ANY iButton
-                        Serial.println("Attempting ENTRY, 2FA required. Sending request...");
-                        publish2FARequest(current_ibutton_id, current_record.associated_id, ESP32_DEVICE_ID);
-                        // publish2FARequest sets isWaitingFor2FA()=true and starts timer
-                        Serial.println("Awaiting 2FA confirmation. Gate remains closed. Scan again or wait for proactive check.");
-                        // Do not proceed with action here, wait for proactive check or next scan
-                    } else { // Attempting entry, 2FA required, BUT another 2FA is already pending
-                        Serial.println("Attempting ENTRY, 2FA required, but another 2FA request is already pending. Please wait.");
-                        intermitentBeep(); // Indicate busy or waiting for other 2FA
-                    }
-                } else { // 2FA is NOT required for entry
-                    Serial.println("Attempting DIRECT ENTRY (2FA not globally required).");
-                    processEntry(current_record, record_idx); // Call helper function for direct entry
+            if (!current_record.is_inside) {   // Attempting ENTRY
+              if (is_2fa_globally_required) {  // 2FA is required for entry
+                if (!isWaitingFor2FA()) {      // And no 2FA request is pending for ANY iButton
+                  Serial.println("Attempting ENTRY, 2FA required. Sending request...");
+                  publish2FARequest(current_ibutton_id, current_record.associated_id, ESP32_DEVICE_ID);
+                  // publish2FARequest sets isWaitingFor2FA()=true and starts timer
+                  Serial.println("Awaiting 2FA confirmation. Gate remains closed. Scan again or wait for proactive check.");
+                  // Do not proceed with action here, wait for proactive check or next scan
+                } else {  // Attempting entry, 2FA required, BUT another 2FA is already pending
+                  Serial.println("Attempting ENTRY, 2FA required, but another 2FA request is already pending. Please wait.");
+                  intermitentBeep();  // Indicate busy or waiting for other 2FA
                 }
-            } else { // Attempting EXIT (assuming scan means exit if inside)
-                Serial.println("Attempting EXIT.");
-                processExit(current_record, record_idx); // Call helper function for exit
+              } else {  // 2FA is NOT required for entry
+                Serial.println("Attempting DIRECT ENTRY (2FA not globally required).");
+                processEntry(current_record, record_idx);  // Call helper function for direct entry
+              }
+            } else {  // Attempting EXIT (assuming scan means exit if inside)
+              Serial.println("Attempting EXIT.");
+              processExit(current_record, record_idx);  // Call helper function for exit
             }
             // No 'proceed_with_action' flag needed here anymore as logic is handled by states/helpers
 
@@ -421,7 +454,7 @@ void loop() {
           break;
       }
 
-      delay(1500); // Keep this delay after any non-cooldown iButton processing
+      delay(1500);  // Keep this delay after any non-cooldown iButton processing
 
     }  // End if (!cooldown_active)
 
