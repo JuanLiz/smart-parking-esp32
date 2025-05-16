@@ -77,6 +77,8 @@ void reconnectMQTT() {
       // For deletion
       mqttClient.subscribe((cmd_topic_base + "ibutton/initiate_delete_mode").c_str());
       Serial.println("Subscribed to: " + cmd_topic_base + "ibutton/initiate_delete_mode");
+      mqttClient.subscribe((cmd_topic_base + "ibutton/cancel_delete_mode").c_str());
+      Serial.println("Subscribed to: " + cmd_topic_base + "ibutton/cancel_delete_mode");
 
     } else {
       Serial.print("MQTT connect failed, rc=");
@@ -357,6 +359,15 @@ void mqttCallback(char* topic, byte* payload_bytes, unsigned int length) {
       // publishGenericError("delete_mode_activation_failed", "another_operation_active");
     }
   }
+  // --- Handle cancel_delete_mode command ---
+    else if (topic_str.equals(cmd_topic_base + "ibutton/cancel_delete_mode")) {
+        if (delete_ibutton_mode_active) {
+            Serial.println("MQTT: Delete iButton mode cancelled by remote command.");
+            clearDeleteIButtonMode(); // Esta función ya resetea el flag y el timer
+        } else {
+            Serial.println("MQTT: Received cancel_delete_mode, but delete mode was not active.");
+        }
+    }
 }
 
 // --- Specific Publishing Functions ---
