@@ -21,6 +21,11 @@ unsigned long two_fa_timeout_start_ms = 0;
 const unsigned long TWO_FA_TIMEOUT_DURATION_MS = 30000;  // 30 seconds
 bool two_fa_granted = false;
 
+// For deletion
+bool delete_ibutton_mode_active = false;
+unsigned long delete_ibutton_timeout_start_ms = 0;
+const unsigned long DELETE_IBUTTON_TIMEOUT_DURATION_MS = 60000;
+
 
 // Forward declaration for callback
 void mqttCallback(char* topic, byte* payload, unsigned int length);
@@ -59,10 +64,7 @@ void reconnectMQTT() {
     Serial.println(full_client_id);
 
     // Attempt to connect
-    // Add user/pass here if mqtt_config includes them
-    // String lwt_topic = String(mqtt_config.base_topic_prefix) + "status";
-    // if (mqttClient.connect(full_client_id.c_str(), lwt_topic.c_str(), 1, true, "{\"online\": false}")) {
-    if (mqttClient.connect(full_client_id.c_str())) {  // Simpler connect for now
+    if (mqttClient.connect(full_client_id.c_str())) {
       Serial.println("MQTT connected!");
       // Subscribe to command topics
       String cmd_topic_base = String(mqtt_config.base_topic_prefix) + "cmd/";
@@ -72,9 +74,9 @@ void reconnectMQTT() {
       Serial.println("Subscribed to: " + cmd_topic_base + "cancel_pairing");
       mqttClient.subscribe((cmd_topic_base + "auth/2fa_response").c_str());
       Serial.println("Subscribed to: " + cmd_topic_base + "auth/2fa_response");
-
-      // Publish initial status (LWT will handle offline)
-      // publishStatus(true, 0, 0); // Occupancy needs to come from main module
+      // For deletion
+      mqttClient.subscribe((cmd_topic_base + "ibutton/initiate_delete_mode").c_str());
+      Serial.println("Subscribed to: " + cmd_topic_base + "ibutton/initiate_delete_mode");
 
     } else {
       Serial.print("MQTT connect failed, rc=");
@@ -133,6 +135,14 @@ void loopMQTTManager() {
     two_fa_granted = false;                     // Explicitly mark as not granted on timeout
     clear2FA_WaitingState();                    // <<-- ESTO LIMPIA EL ESTADO
     // El .ino detectará que isWaitingFor2FA() es false y two_fa_granted es false.
+  }
+
+  // Handle Delete iButton Mode Timeout ---
+  if (delete_ibutton_mode_active
+      && (millis() - delete_ibutton_timeout_start_ms > DELETE_IBUTTON_TIMEOUT_DURATION_MS)) {
+    Serial.println("MQTT: Delete iButton mode timed out.");
+    publishDeleteFailure("timeout");
+    clearDeleteIButtonMode();
   }
 }
 
@@ -333,13 +343,27 @@ void mqttCallback(char* topic, byte* payload_bytes, unsigned int length) {
       Serial.println("Received 2FA response, but not waiting for one. Ignored.");
     }
   }
+  // --- Handle initiate_delete_mode command ---
+  else if (topic_str.equals(cmd_topic_base + "ibutton/initiate_delete_mode")) {
+    // Solo activar si no hay otra operación MQTT en curso
+    if (!delete_ibutton_mode_active && !isPairingModeActive() && !isWaitingFor2FA()) {
+      Serial.println("MQTT: Delete iButton mode activated by remote command.");
+      delete_ibutton_mode_active = true;
+      delete_ibutton_timeout_start_ms = millis();
+      publishDeleteReady();  // Opcional: notificar a la app que estamos listos
+    } else {
+      Serial.println("MQTT: Cannot activate delete iButton mode, another operation is active or already in delete mode.");
+      // Opcional: Enviar un mensaje de error a la app si se intenta activar mientras otra cosa está activa
+      // publishGenericError("delete_mode_activation_failed", "another_operation_active");
+    }
+  }
 }
 
 // --- Specific Publishing Functions ---
 void publishStatus(bool online, uint32_t occupancy, uint32_t total_spaces) {
-    snprintf(char_buffer, sizeof(char_buffer), "{\"online\":%s, \"occupancy\":%u, \"total_spaces\":%u, \"ip\":\"%s\"}",
-             online ? "true" : "false", occupancy, total_spaces, WiFi.localIP().toString().c_str());
-    publishMQTTMessage("status", char_buffer, true);
+  snprintf(char_buffer, sizeof(char_buffer), "{\"online\":%s, \"occupancy\":%u, \"total_spaces\":%u, \"ip\":\"%s\"}",
+           online ? "true" : "false", occupancy, total_spaces, WiFi.localIP().toString().c_str());
+  publishMQTTMessage("status", char_buffer, true);
 }
 
 void publishIButtonScanned(const byte* ibutton_id, bool is_registered, uint32_t associated_id) {
@@ -384,6 +408,28 @@ void publish2FARequest(const byte* ibutton_id, uint32_t associated_id, const cha
   snprintf(char_buffer, sizeof(char_buffer), "{\"ibutton_id\":\"%s\", \"associated_id\":%u, \"device_id\":\"%s\"}",
            ib_id_str.c_str(), associated_id, device_id_esp32);
   publishMQTTMessage("auth/2fa_request", char_buffer);
+}
+
+// --- Deletion publish implementations ---
+void publishDeleteReady() {
+  // Payload simple, o incluso vacío si el tópico es suficiente
+  publishMQTTMessage("ibutton/delete_ready", "{\"status\":\"ready_for_delete\"}");
+}
+
+void publishDeleteSuccess(const byte* ibutton_id) {
+  String ib_id_str = ibuttonBytesToHexString(ibutton_id);
+  snprintf(char_buffer, sizeof(char_buffer), "{\"ibutton_id\":\"%s\", \"status\":\"deleted\"}", ib_id_str.c_str());
+  publishMQTTMessage("ibutton/delete_success", char_buffer);
+}
+
+void publishDeleteFailure(const char* reason, const byte* ibutton_id_attempted) {
+  if (ibutton_id_attempted != nullptr) {
+    String ib_id_str = ibuttonBytesToHexString(ibutton_id_attempted);
+    snprintf(char_buffer, sizeof(char_buffer), "{\"reason\":\"%s\", \"ibutton_id_attempted\":\"%s\", \"status\":\"delete_failed\"}", reason, ib_id_str.c_str());
+  } else {
+    snprintf(char_buffer, sizeof(char_buffer), "{\"reason\":\"%s\", \"status\":\"delete_failed\"}", reason);
+  }
+  publishMQTTMessage("ibutton/delete_failure", char_buffer);
 }
 
 
@@ -432,4 +478,14 @@ bool get2FA_GrantStatus() {
 void reset2FA_GrantStatus() {
   Serial.println("2FA: Resetting grant status flag.");  // DEBUG RESET
   two_fa_granted = false;
+}
+
+bool isDeleteIButtonModeActive() {
+  return delete_ibutton_mode_active;
+}
+
+void clearDeleteIButtonMode() {
+  Serial.println("MQTT: Clearing Delete iButton mode.");
+  delete_ibutton_mode_active = false;
+  delete_ibutton_timeout_start_ms = 0;
 }

@@ -52,6 +52,11 @@ void publishPairingSuccess(const char* pairing_session_id, const byte* ibutton_i
 void publishPairingFailure(const char* pairing_session_id, const char* reason);
 void publish2FARequest(const byte* ibutton_id, uint32_t associated_id, const char* device_id_esp32);
 
+// For button deletion
+void publishDeleteReady();
+void publishDeleteSuccess(const byte* ibutton_id);
+void publishDeleteFailure(const char* reason, const byte* ibutton_id_attempted = nullptr); 
+
 // --- Getters for state needed by main .ino ---
 bool isMQTTConnected();
 bool isPairingModeActive();
@@ -63,6 +68,10 @@ const char* get2FA_iButtonId_Str(); // Gets iButton ID (string) waiting for 2FA
 void clear2FA_WaitingState(); // Clears the 2FA waiting state
 bool get2FA_GrantStatus(); // Gets true if 2FA was granted, false if denied or timed out
 void reset2FA_GrantStatus(); // Resets grant status for next 2FA
+
+//For deletion
+bool isDeleteIButtonModeActive();
+void clearDeleteIButtonMode();
 
 
 #endif // MQTT_MANAGER_H

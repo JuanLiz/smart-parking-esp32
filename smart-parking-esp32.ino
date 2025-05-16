@@ -42,9 +42,9 @@ Servo gateServo;
 byte current_ibutton_id[IBUTTON_ID_LEN];              // Buffer for the currently read iButton ID
 uint32_t last_associated_id = INVALID_ASSOCIATED_ID;  // Store associated ID of authenticated iButton
 
-uint32_t current_occupancy = 0;                // NEW: RAM variable for current count
-byte last_scanned_id[IBUTTON_ID_LEN] = { 0 };  // NEW: Track last scanned ID for cooldown
-unsigned long last_scan_timestamp = 0;         // NEW: Track last scan time for cooldown
+uint32_t current_occupancy = 0;                // RAM variable for current count
+byte last_scanned_id[IBUTTON_ID_LEN] = { 0 };  // Track last scanned ID for cooldown
+unsigned long last_scan_timestamp = 0;         // Track last scan time for cooldown
 
 // --- States for Serial Control ---
 enum ControlState {
@@ -191,7 +191,7 @@ void setup() {
   // NUEVO: Iniciar Serial con timeout
   Serial.begin(115200);
   unsigned long serial_timeout_start = millis();
-  while (!Serial && (millis() - serial_timeout_start < 2000)) { // Espera hasta 2 segundos
+  while (!Serial && (millis() - serial_timeout_start < 2000)) {  // Espera hasta 2 segundos
     // Puedes dejar este bucle vacío o parpadear un LED si tienes uno para indicar espera
     delay(10);
   }
@@ -351,7 +351,38 @@ void loop() {
   }
   // --- END MQTT Pairing Logic ---
 
-  if (readIButton(current_ibutton_id)) {
+  // --- NUEVO: Handle MQTT-driven iButton Deletion ---
+  if (isDeleteIButtonModeActive()) {
+    if (readIButton(current_ibutton_id)) {
+      Serial.print("\niButton detected during MQTT Delete Mode: ");
+      printIButtonID(current_ibutton_id);
+      Serial.println();
+
+      if (deleteIButton(current_ibutton_id)) {  // deleteIButton ya maneja la ocupación
+        Serial.println("iButton deleted successfully via MQTT command.");
+        publishDeleteSuccess(current_ibutton_id);
+        current_occupancy = readOccupancyCount();  // Refrescar RAM
+        printAllRegisteredIButtons();
+      } else {
+        // deleteIButton imprime su propio error ("not found")
+        Serial.println("Failed to delete iButton via MQTT command (not found).");
+        publishDeleteFailure("not_found", current_ibutton_id);
+      }
+      clearDeleteIButtonMode();  // Salir del modo borrado después del intento
+      currentState = IDLE;       // Asegurar estado IDLE local
+      delay(1500);               // Delay para evitar re-lectura inmediata
+                                 // No necesitamos un 'return' aquí, el resto del loop se saltará o el cooldown actuará
+    }
+    // Si no se lee un iButton, el timeout en loopMQTTManager() eventualmente lo manejará.
+    // Podríamos añadir un pequeño delay aquí si solo estamos en modo borrado esperando.
+    // delay(50); // Ya está al final del loop
+    // No es necesario un 'return' aquí, porque si no hay iButton, el resto del loop
+    // (la sección de readIButton normal) tampoco encontrará nada.
+  }
+  // --- END Handle MQTT-driven iButton Deletion ---
+
+  // if (readIButton(current_ibutton_id)) {
+  if (readIButton(current_ibutton_id) && !isDeleteIButtonModeActive() && !isPairingModeActive()) {
     unsigned long now = millis();
     bool cooldown_active = false;
 
