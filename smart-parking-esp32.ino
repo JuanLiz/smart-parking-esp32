@@ -2,19 +2,21 @@
 #include <ESP32Servo.h>
 #include "ibutton_manager.h"
 #include "mqtt_manager.h"
+#include "lcd_manager.h"
 
 // --- User Configuration ---
 // iButton
 #define IBUTTON_DATA_PIN 33         // GPIO pin for the OneWire data line
 #define MAX_REGISTERED_IBUTTONS 10  // Maximum number of iButtons to store
-#define TOTAL_PARKING_SPACES 3      // Total capacity
-#define IBUTTON_COOLDOWN_MS 10000   // Seconds cooldown for same iButton
+//#define TOTAL_PARKING_SPACES 3      // Total capacity
+const uint32_t TOTAL_PARKING_SPACES = 3;
+#define IBUTTON_COOLDOWN_MS 10000  // Seconds cooldown for same iButton
 
 // Servo
 #define SERVO_PIN 27             // GPIO pin for the Servo motor
 #define SERVO_OPEN_ANGLE 90      // Angle for open gate position
 #define SERVO_CLOSE_ANGLE 0      // Angle for closed gate position
-#define GATE_OPEN_DELAY_MS 1000  // Time the gate stays open (milliseconds)
+#define GATE_OPEN_DELAY_MS 5000  // Time the gate stays open (milliseconds)
 
 // Buzzer
 #define BUZZER_PIN 26                // GPIO pin for the Buzzer
@@ -57,6 +59,7 @@ ControlState currentState = IDLE;
 // --- Helper Functions ---
 void openGate() {
   Serial.println("Opening gate...");
+  lcdPrintTemporary("Abriendo...", "", 1000);  // Mensaje temporal en LCD
   // Single beep for success
   digitalWrite(BUZZER_PIN, HIGH);
   delay(BEEP_DURATION_MS);
@@ -95,9 +98,11 @@ void processEntry(IButtonRecord &record, int record_idx) {
       Serial.println("Entry successful. Record and count updated.");
       if (isMQTTConnected()) {  // NUEVO: Publicar estado actualizado
         publishStatus(true, current_occupancy, TOTAL_PARKING_SPACES);
+        lcdPrintTemporary("Acceso Concedido", "Bienvenido!", 2000);
       }
     } else {
       Serial.println("Error: Failed to update record/occupancy for entry. Reverting RAM.");
+      lcdPrintTemporary("Error Guardado", "Intente de nuevo", 2000);
       current_occupancy--;       // Revert RAM
       record.is_inside = false;  // Revert RAM
                                  // Note: EEPROM might be inconsistent if one write failed.
@@ -108,6 +113,7 @@ void processEntry(IButtonRecord &record, int record_idx) {
     last_scan_timestamp = entry_time;                            // Use the time of entry attempt
   } else {
     Serial.println("Parking FULL. Entry denied.");
+    lcdPrintTemporary("Parking LLENO", "Acceso Denegado", 3000);
     intermitentBeep();
   }
 }
@@ -130,6 +136,7 @@ void processExit(IButtonRecord &record, int record_idx) {
       Serial.println("Exit successful. Record and count updated.");
       if (isMQTTConnected()) {  // NUEVO: Publicar estado actualizado
         publishStatus(true, current_occupancy, TOTAL_PARKING_SPACES);
+        lcdPrintTemporary("Salida Exitosa", "Hasta Luego!", 2000);
       }
     } else {
       Serial.println("Error: Failed to update occupancy count after record update for exit. Record updated.");
@@ -209,6 +216,17 @@ void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);  // Ensure buzzer is off initially
 
+  // NUEVO: Inicializar LCD Manager
+  if (setupLCDManager()) {  // Usa pines por defecto 21, 22
+    Serial.println("LCD Manager Initialized.");
+    lcdDisplayWelcome();  // Mostrar mensaje de bienvenida inicial
+    delay(2000);          // Mostrar bienvenida por un momento
+  } else {
+    Serial.println("LCD Manager Initialization FAILED.");
+    // Puedes decidir qué hacer si la LCD falla, por ahora el programa continúa
+  }
+
+
   // Initialize WiFi
   setupMQTTManager(mqtt_settings, WIFI_SSID, WIFI_PASSWORD);
 
@@ -226,6 +244,7 @@ void setup() {
   Serial.printf("System ready. Total Spaces: %d, Current Occupancy: %u\n", TOTAL_PARKING_SPACES, current_occupancy);
   printAllRegisteredIButtons();
   Serial.print("\nPresent iButton or enter command (r,d,l,c): ");
+  lcdDisplayOccupancy(current_occupancy, TOTAL_PARKING_SPACES);
 }
 
 // --- Main Loop ---
@@ -237,6 +256,7 @@ void loop() {
                       // - Llamar callback -> setear two_fa_granted (si respuesta llega)
                       // - Expirar timeout -> setear two_fa_granted=false y clear2FA_WaitingState() (si tiempo pasa)
 
+  loopLCDManager(current_occupancy, TOTAL_PARKING_SPACES);
 
   static bool mqtt_just_connected = false;
   static bool last_mqtt_connected_state = false;
@@ -414,9 +434,11 @@ void loop() {
         case WAITING_FOR_IBUTTON_TO_REGISTER:
           if (registerIButton(current_ibutton_id)) {
             Serial.println("iButton registered successfully.");
+            lcdPrintTemporary("iButton Reg.", "Exitoso!", 2000);
             printAllRegisteredIButtons();  // Show updated list
           } else {
             Serial.println("Failed to register iButton (maybe already exists, EEPROM full, or ID generation issue?).");
+            lcdPrintTemporary("Fallo Registro", "Ya existe?", 2000);
           }
           currentState = IDLE;  // Return to idle state
           Serial.print("\nSystem Idle. Present iButton or enter command (r,d,l,c): ");
@@ -425,10 +447,12 @@ void loop() {
         case WAITING_FOR_IBUTTON_TO_DELETE:
           if (deleteIButton(current_ibutton_id)) {
             Serial.println("iButton deleted successfully.");
+            lcdPrintTemporary("iButton Borrado", "Exitoso!", 2000);
             current_occupancy = readOccupancyCount();
             printAllRegisteredIButtons();
           } else {
             Serial.println("Failed to delete iButton (was not found).");
+            lcdPrintTemporary("Fallo Borrado", "No encontrado?", 2000);
           }
           currentState = IDLE;
           Serial.printf(
@@ -451,21 +475,28 @@ void loop() {
 
             bool is_2fa_globally_required = true;  // TODO: Make this configurable
 
-            if (!current_record.is_inside) {   // Attempting ENTRY
-              if (is_2fa_globally_required) {  // 2FA is required for entry
-                if (!isWaitingFor2FA()) {      // And no 2FA request is pending for ANY iButton
-                  Serial.println("Attempting ENTRY, 2FA required. Sending request...");
-                  publish2FARequest(current_ibutton_id, current_record.associated_id, ESP32_DEVICE_ID);
-                  // publish2FARequest sets isWaitingFor2FA()=true and starts timer
-                  Serial.println("Awaiting 2FA confirmation. Gate remains closed. Scan again or wait for proactive check.");
-                  // Do not proceed with action here, wait for proactive check or next scan
-                } else {  // Attempting entry, 2FA required, BUT another 2FA is already pending
-                  Serial.println("Attempting ENTRY, 2FA required, but another 2FA request is already pending. Please wait.");
-                  intermitentBeep();  // Indicate busy or waiting for other 2FA
+            if (!current_record.is_inside) {  // Attempting ENTRY
+              if (current_occupancy >= TOTAL_PARKING_SPACES) {
+                Serial.println("Parking FULL. Entry denied BEFORE 2FA or direct entry.");
+                lcdPrintTemporary("Parking LLENO", "Acceso Denegado", 3000);
+                intermitentBeep();
+              } else {
+                if (is_2fa_globally_required) {  // 2FA is required for entry
+                  if (!isWaitingFor2FA()) {      // And no 2FA request is pending for ANY iButton
+                    Serial.println("Attempting ENTRY, 2FA required. Sending request...");
+                    lcdPrint("Esperando 2FA", "App Movil...");
+                    publish2FARequest(current_ibutton_id, current_record.associated_id, ESP32_DEVICE_ID);
+                    // publish2FARequest sets isWaitingFor2FA()=true and starts timer
+                    Serial.println("Awaiting 2FA confirmation. Gate remains closed. Scan again or wait for proactive check.");
+                    // Do not proceed with action here, wait for proactive check or next scan
+                  } else {  // Attempting entry, 2FA required, BUT another 2FA is already pending
+                    Serial.println("Attempting ENTRY, 2FA required, but another 2FA request is already pending. Please wait.");
+                    intermitentBeep();  // Indicate busy or waiting for other 2FA
+                  }
+                } else {  // 2FA is NOT required for entry
+                  Serial.println("Attempting DIRECT ENTRY (2FA not globally required).");
+                  processEntry(current_record, record_idx);  // Call helper function for direct entry
                 }
-              } else {  // 2FA is NOT required for entry
-                Serial.println("Attempting DIRECT ENTRY (2FA not globally required).");
-                processEntry(current_record, record_idx);  // Call helper function for direct entry
               }
             } else {  // Attempting EXIT (assuming scan means exit if inside)
               Serial.println("Attempting EXIT.");
@@ -475,6 +506,7 @@ void loop() {
 
           } else {  // iButton not registered
             Serial.println("iButton NOT REGISTERED.");
+            lcdPrintTemporary("iButton DESCON.", "Acceso Denegado", 3000);
             last_associated_id = INVALID_ASSOCIATED_ID;
             intermitentBeep();
           }
@@ -490,6 +522,7 @@ void loop() {
     }  // End if (!cooldown_active)
 
   }  // End if (readIButton)
+
 
   // Small delay in the loop to yield CPU time when idle
   delay(50);
