@@ -26,8 +26,8 @@ const uint32_t TOTAL_PARKING_SPACES = 3;
 #define REJECT_BEEP_COUNT 3          // Number of rejection beeps
 
 // --- WiFi Configuration ---
-const char *WIFI_SSID = "jalarras";
-const char *WIFI_PASSWORD = "saposapo777";
+const char *WIFI_SSID = "ssid";
+const char *WIFI_PASSWORD = "password";
 
 // --- MQTT Configuration ---
 MQTTConfig mqtt_settings = {
