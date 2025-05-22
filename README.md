@@ -21,11 +21,11 @@ The mobile app repository can be found [here](https://github.com/JuanLiz/smart-p
 
 * ESP32 Development Board
 * DS1990A iButton(s)
-* 1-Wire iButton Reader (e.g., a simple probe connected to a GPIO pin with a pull-up resistor)
+* 1-Wire iButton Reader (a simple probe connected to a GPIO pin with a pull-up resistor)
 * Servomotor (e.g., SG90 or similar)
 * 16x2 I2C LCD Display
 * Active or Passive Buzzer
-* Appropriate resistors (e.g., 4.7kΩ pull-up for the 1-Wire data line)
+* Appropriate resistors (4.7kΩ pull-up for the 1-Wire data line)
 * Breadboard and connecting wires
 
 ## Software & Libraries
@@ -36,9 +36,9 @@ The mobile app repository can be found [here](https://github.com/JuanLiz/smart-p
   * `EEPROM.h`: For persistent storage.
   * `Servo.h`: For controlling the servo motor (ESP32-specific version if applicable).
 * **External Libraries:**
-  * `OneWire.h` (by Paul Stoffregen): For 1-Wire communication with iButtons.
-  * `LiquidCrystal_I2C.h` (e.g., by Frank de Brabander): For I2C communication with the LCD.
-  * `PubSubClient.h` (by Nick O'Leary): For MQTT client functionality.
+  * `OneWire.h`: For 1-Wire communication with iButtons.
+  * `LiquidCrystal_I2C.h`: For I2C communication with the LCD.
+  * `PubSubClient.h`: For MQTT client functionality.
 
 ## Setup & Installation
 
