@@ -1,6 +1,6 @@
 <style> h1{ font-family: 'Lato Black'; } h2{ font-family: 'Lato Heavy'; } h3, h4{ font-family: 'Lato Semibold'; } p, table, ul, li{ font-family: 'Lato'; } code, pre { font-family: '0xProto Nerd Font' !important; } </style>
 
-# Sistema de Estacionamiento Inteligente
+# Sistema Smart Parking con ESP32, iButton y autenticación de doble factor con MQTT
 
 ## Introducción
 
@@ -37,7 +37,7 @@ graph LR
     style B fill:#bbf,stroke:#333,stroke-width:2px
     style C fill:#dfd,stroke:#333,stroke-width:2px
 
-    subgraph Ejemplo ID completo hexadecimal
+    subgraph Ejemplo ID HEX
         direction LR
         D(01) -.-> E(123456789ABC) -.-> F(XX)
     end
