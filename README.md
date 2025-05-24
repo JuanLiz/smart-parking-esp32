@@ -17,6 +17,10 @@ The mobile app repository can be found [here](https://github.com/JuanLiz/smart-p
 * **Occupancy Control:** Tracks the number of available parking spaces, displaying "Parking Full" and denying entry when capacity is reached.
 * **Status Publishing:** Regularly publishes system status (e.g., online, occupancy) to an MQTT topic.
 
+## Detailed Project Log
+
+For a comprehensive understanding of the project's architecture, development phases, component choices, and detailed flowcharts, please refer to the [Project Logbook](./logbook.md).
+
 ## Hardware Required
 
 * ESP32 Development Board
@@ -89,6 +93,6 @@ The system initializes by connecting to WiFi and the MQTT broker. It then monito
 * **Status Updates:** The ESP32 periodically publishes its online status and current parking occupancy to MQTT topics.
 * **User Feedback:** The LCD displays messages like "Access Granted," "Access Denied," "Parking Full," "Present iButton," and current occupancy. The buzzer provides auditory cues for success, failure, and alerts.
 
-## Detailed Project Log
+## License
 
-For a comprehensive understanding of the project's architecture, development phases, component choices, and detailed flowcharts, please refer to the [Project Logbook](./logbook.md).
+This project is licensed under the MIT License. See the [LICENSE](./LICENSE) file for details.
