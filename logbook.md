@@ -129,6 +129,11 @@ The app can initiate a pairing process.
 4. ESP32 attempts to register it. It then publishes to `[PREFIX]/pairing/success` (with iButton ID and associated ID) or `[PREFIX]/pairing/failure` (with a reason).
 5. The app receives the result and informs the user.
 
+| ![iButton pairing process](img/ss-5.png) | ![iButton pairing success](img/ss-6.png) |
+|:---:|:---:|
+| *iButton pairing process* | *iButton pairing success* |
+
+
 **Two-Factor Authentication (2FA) for entry:**
 When a registered iButton is scanned for entry, and if 2FA is configured as required (assumed true for this development phase):
 
@@ -138,6 +143,15 @@ When a registered iButton is scanned for entry, and if 2FA is configured as requ
 4. User responds via the app (Permit/Deny), often after a biometric check on the phone.
 5. App publishes the decision to `[PREFIX]/cmd/auth/2fa_response` (with `allow_entry: true/false`).
 6. ESP32 receives this response. If `allow_entry` is true, it proceeds with the `processEntry` logic (opening gate, updating occupancy). If false or if a timeout occurs on the ESP32 waiting for the app's response, entry is denied.
+
+| ![Authentication notification](img/ss-1.png) | ![Authentication notification detail](img/ss-2.png) |
+|:---:|:---:|
+| *Authentication notification when app is in background* | *Authentication notification detail* |
+
+| ![Authentication flow](img/ss-3.jpeg) | ![Entry approval process](img/ss-4.png) |
+|:---:|:---:|
+| *Authentication flow in the app* | *Entry approval process* |
+
 
 ```mermaid
 sequenceDiagram
@@ -199,6 +213,11 @@ A similar flow was implemented for deleting iButtons remotely.
 3. User presents the iButton to be deleted.
 4. ESP32 attempts deletion and publishes the result (`delete_success` or `delete_failure`).
 5. The app can also send a `[PREFIX]/cmd/ibutton/cancel_delete_mode` command to instruct the ESP32 to exit delete mode before a timeout or iButton presentation.
+
+| ![iButton deletion mode](img/ss-7.png) | ![iButton deletion success](img/ss-8.png) |
+|:---:|:---:|
+| *Initiating iButton deletion mode* | *iButton deletion success* |
+
 
 ## Conclusions
 

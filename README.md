@@ -45,7 +45,7 @@ The mobile app repository can be found [here](https://github.com/JuanLiz/smart-p
 1. **Clone the Repository:**
 
     ```bash
-    git clone https://github.com/JuanLiz/smpart-parking-esp32.git
+    git clone https://github.com/JuanLiz/smart-parking-esp32.git
     cd smart-parking-esp32
     ```
 
@@ -91,4 +91,4 @@ The system initializes by connecting to WiFi and the MQTT broker. It then monito
 
 ## Detailed Project Log
 
-For a comprehensive understanding of the project's architecture, development phases, component choices, and detailed flowcharts, please refer to the [Project Logbook](./logbook.md) or [Project Logbook (in Spanish)](./logbook-es.md).
+For a comprehensive understanding of the project's architecture, development phases, component choices, and detailed flowcharts, please refer to the [Project Logbook](./logbook.md).
